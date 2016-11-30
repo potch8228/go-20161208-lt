@@ -1,0 +1,101 @@
+最近Go言語で、syscallを触り始めた話
+8 Dec 2016
+Tags: golang, go, syscall, intro, code
+
+小林 達也 (potch8228)
+potch8228@github
+
+
+* はじめに
+
+私は
+- 普段サーバサイドアプリケーションエンジニア(でもこれに限らず)
+- Go言語は週末たまに触るくらい
+
+.link http://go-talks.appspot.com/github.com/potch8228/go-20161208-lt/main.slide
+- このスライド
+
+* ことの始まり
+
+Linuxには「BlueZ」というBluetoothスタック/ドライバが用意されているが、 調べてみると、(前提として、BLEではない)Bluetoothプログラミングはソケットプログラミングができれば良いということに気がつく。
+
+これを使ってローカルのキーボード/マウスをRaspberry Pi上でBluetoothデバイス化させたくなった。
+
+別の言語で書かれていたコードで遊んでいたが、この際にGoでポートしてみた。
+
+* 下調べ: 基本的にGoの標準パッケージは充実している
+
+本当に充実しているので、パッケージが外部に公開しているAPIでほとんどは事足りて、Bluetooth関連も定数の用意がある
+
+* が、しかし
+
+実際: 定数の用意があっても、実際に使うにはそれだけでは足りなかった。
+
+* 下調べ: 何が足りなかった？
+
+今回、HoG(HID over GATT; BLE向け)ではなく、「レガシー」HIDプロファイルを使うため、ソケットアドレスを指定するstructが必要だった。
+
+↓
+
+しかし、そのstruct (SockaddrL2) は用意されていなかった。→ なら自分で定義しよう！
+
+↓
+
+残念。自前structをsys/x/unix.Bind()に渡したら、インタフェース不一致。
+
+↓
+
+つまり、ソケットがListenができない。
+(それ以降の処理が継続できない・・・)
+
+* 結局、必要なソケット周りの一通りの処理を実装し直す
+
+もはやread()/write()のように簡潔な関数を使える状況ではなかったので、コツコツと必要なシステムコールを実装し直した。
+
+とは言え、いかに実装するのかも検討がつかないから標準パッケージを読んで手探りで書いた。
+
+* 結局、必要なソケット周りの一通りの処理を実装し直す (続き)
+
+- Goの標準パッケージは基本的にGoで書かれていて、公式のGoDocからもワンクリックで参照できる
+簡潔に書かれて読みやすく、Goの書き方習慣を勉強するためのこの上ない教材
+
+* 結局、必要なソケット周りの一通りの処理を実装し直す (続き)
+
+例: os.File.Read()の場合
+
+.link https://golang.org/src/os/file_unix.go#L224 (*File) Read(b []byte) (n int, err error) の元その1
+File#read(b []byte) (n int, err error); unix/linux
+
+.link https://golang.org/src/syscall/syscall_unix.go#L160 (*File) Read(b []byte) (n int, err error) の元その2
+syscall.Read(fd int, p []byte) (n int, err error); unix/linux
+
+.link https://golang.org/src/syscall/zsyscall_linux_amd64.go#L776 (*File) Read(b []byte) (n int, err error) の元その3
+syscall.read(fd int, p []byte) (n int, err error); linux/amd64
+
+* 結局、必要なソケット周りの一通りの処理を実装し直す (続き)
+
+低レイヤー部分(OS側)のフラグメントになるほど、コメントがほとんどなくなっていくが、簡素な記述ためコードリーディングをしていても苦痛が少ない。
+
+* 結局、必要なソケット周りの一通りの処理を実装し直す (続き)
+
+- Goにはポインタ/参照の概念はあるが、C/C++の様な「生の」ポインタとは違うので、システムコールをするためには頻繁にuintptrとunsafe.Pointerの変換作業が必要になる
+
+.link https://golang.org/pkg/unsafe/#Pointer
+詳しい使い方はここにある。
+
+* 結局、必要なソケット周りの一通りの処理を実装し直す (続き)
+
+その全容:
+
+.link https://github.com/potch8228/gobt/blob/master/bluetooth/bluetooth.go
+
+実際にHIDプロファイルを操作するために、BlueZが提供するD-Bus APIも叩いている。
+(D-Busプログラミングも初挑戦)
+
+* この実装を通して学べたこと
+
+とにかく低レイヤーの実装を行うことで、LL系の言語を使っていたらそれほど気に止めない処理について復習するチャンスができた。
+
+システムコールについても勉強し直すことができた。
+
+標準パッケージはいろんな意味で便利だと気がついた。
